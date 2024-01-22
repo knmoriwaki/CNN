@@ -1,6 +1,5 @@
-# Asteroseismology
+# 2D convolutional neural network 
 
-Estimate the inclination angle from the spectrum
 
 ## Requirement
 
@@ -18,6 +17,12 @@ Install the following libraries with `pip`.
 Put your training and validation data (e.g., 0000000.0.data, Combinations.txt) at ./training_data
 
 Put your test data at ./test_data
+
+Run main.py 
+```
+python main.py --isTrain # for training
+python main.py # for test
+```
 
 Run training and test code by 
 ```
