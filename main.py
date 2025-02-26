@@ -19,16 +19,24 @@ from utils import *
 parser = argparse.ArgumentParser(description=""
                                  )
 parser.add_argument("--isTrain", dest="isTrain", action='store_true', help="train or test")
-parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="Root directory to save learned model parameters")
+parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="directory to save learned model parameters")
 
+### Data parameters ###
+parser.add_argument("--data_dir", dest="data_dir", type=str, default="./data", help="directory to data")
+parser.add_argument("--n_feature", dest="n_feature", type=int, default=3, help="number of input elements")
+parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension")
+parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
+parser.add_argument("--ndata", dest="ndata", type=int, default=1000, help="the number of data")
+
+### Model parameters ###
 parser.add_argument("--model", dest="model", default="CNN", help="model")
-parser.add_argument("--n_feature", dest="n_feature", type=int, default=4, help="number of input elements")
 parser.add_argument("--hidden_dim", dest="hidden_dim", type=int, default=32, help="number of NN nodes")
-parser.add_argument("--input_dim", dest="input_dim", type=int, default=106, help="the input dimension")
-parser.add_argument("--n_layer", dest="n_layer", type=int, default=5, help="number of NN layers")
+parser.add_argument("--n_layer", dest="n_layer", type=int, default=3, help="number of NN layers")
 parser.add_argument("--r_drop", dest="r_drop", type=float, default=0.0, help="dropout rate")
-parser.add_argument("--batch_size", dest="batch_size", type=int, default=4, help="batch size")
-parser.add_argument("--epoch", dest="epoch", type=int, default=10, help="training epoch")
+
+### Training parameters ###
+parser.add_argument("--batch_size", dest="batch_size", type=int, default=32, help="batch size")
+parser.add_argument("--epoch", dest="epoch", type=int, default=100, help="training epoch")
 parser.add_argument("--epoch_decay", dest="epoch_decay", type=int, default=0, help="training epoch")
 parser.add_argument("--lr", dest="lr", type=float, default=1e-3, help="learning rate")
 parser.add_argument("--loss", dest="loss", default="l1norm", help="loss function")
@@ -72,6 +80,11 @@ def update_learning_rate(optimizer, scheduler):
 ####################################################
 
 def train(device):
+    ### Save arguments ###
+    args_dict = vars(args)
+    with open(f"{args.model_dir}/args.json", "w") as f:
+        json.dump(args_dict, f)
+    print(f"# Arguments saved to {args.model_dir}/args.json")
 
     ### define loss function ###
 
@@ -89,7 +102,7 @@ def train(device):
     model = MyModel(args)
 
     print(model)
-    summary( model, input_size=(args.batch_size, args.n_feature, args.input_dim, args.input_dim), col_names=["output_size", "num_params"])
+    summary( model, input_size=(args.batch_size, args.n_feature, args.input_dim, args.input_dim), col_names=["input_size", "output_size", "num_params"])
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0) #default: lr=1e-3, betas=(0.9,0.999), eps=1e-8
     def lambda_rule(ee):
@@ -103,8 +116,13 @@ def train(device):
     print( f"# n_layer: {args.n_layer}" )
 
     ### load training and validation data ###
-    data, label = load_jwst_data()
-    val_data, val_label = load_jwst_data()
+    norm_param_file = f"{args.model_dir}/norm_param.txt"
+    data, label, val_data, val_label = load_SDC3b_data(args.data_dir, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
+
+    print( f"# data: {data.size()}")
+    print( f"# label: {label.size()}")
+    print( f"# val_data: {val_data.size()}")
+    print( f"# val_label: {val_label.size()}")
 
     dataset = MyDataset(data, label)
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
@@ -140,9 +158,10 @@ def train(device):
                 loss = loss_func(output, ll)
                 loss_val = loss_func(output_val, val_label)
 
-            print("{:d} {:f} {:f}".format(idx, loss.item(), loss_val.item()) )
+            log = "{:d} {:f} {:f}".format(idx, loss.item(), loss_val.item())
+            print(log)
             with open(fout, "a") as f:
-                print("{:d} {:f} {:f}".format(idx, loss.item(), loss_val.item()), file=f)
+                print(log, file=f)
 
             model.zero_grad()
             loss.backward()
@@ -162,7 +181,9 @@ def train(device):
             for i, (ll, oo) in enumerate(zip(val_label, output)):
                 pred = oo 
                 true = ll
-                print(true.item(), pred.item(), file=f)
+                for j in range(args.n_feature):
+                    print(f"{true[j].item()} {pred[j].item()} ", end="", file=f)
+                print("", file=f)
         print(f"# output {fname}", file=sys.stderr)
 
     ### save model ###
@@ -170,15 +191,10 @@ def train(device):
     torch.save(model.state_dict(), fsave)
     print( f"# save {fsave}" )
 
-
-
 ####################################################
 ### test
 ####################################################
 def test(device):
-
-    if args.loss == "l1norm":
-        odim = 1 if isinstance(args.output_id, int) else len(args.output_id)
 
     ### define network ###
     model = MyModel(args)
@@ -190,7 +206,8 @@ def test(device):
     print("# load model from {}/model.pth".format(args.model_dir))
 
     ### load test data ###
-    data, label = load_jwst_data()
+    norm_param_file = f"{args.model_dir}/norm_param.txt"
+    data, label, _, _ = load_SDC3b_data(args.data_dir, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, istart=args.idata_start, ndata=args.ndata, is_train=False, device=device)
 
     ### output test result ###
     fname = "{}/test.txt".format(args.model_dir)
@@ -203,7 +220,10 @@ def test(device):
             output = model(dd)
             pred = output 
             true = ll 
-            print(true.item(), pred.item(), file=f)
+
+            for j in range(args.n_feature):
+                print(f"{true[0,j].item()} {pred[0,j].item()} ", end="", file=f)
+            print("", file=f)
 
             del dd, ll, output
             torch.cuda.empty_cache()

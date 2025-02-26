@@ -1,19 +1,97 @@
 import os
 import sys
 import numpy as np
-import pandas as pd
 
 import torch
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 
-
 from tqdm import tqdm
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from astropy.io import fits
+
+def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False):
+    images = np.array(images)
+    labels = np.array(labels)
+    
+    if norm_param_file == None:
+        print("# No normalization")
+        return images, labels
+
+    if is_train:
+        with open(norm_param_file, 'w') as f:
+            mean = np.mean(images)
+            std = np.std(images)
+            f.write(f"{mean} {std}\n")
+
+            images = (images - mean) / std
+
+            if not for_estimate_only:
+                for i in range(labels.shape[1]):
+                    min_val = np.min(labels[:,i])
+                    max_val = np.max(labels[:,i])
+                    f.write(f"{min_val} {max_val}\n")
+
+                    #labels[:,i] = (labels[:,i] - min_val) / (max_val - min_val)
+
+        print(f"# Save statistics to {norm_param_file}")
+
+    else:
+        with open(norm_param_file, 'r') as f:
+            for i, line in enumerate(f):
+                val1, val2 = line.split()
+                val1 = float(val1)
+                val2 = float(val2)
+            
+                if i == 0:
+                    images = (images - val1) / val2
+                else:
+                    pass
+                    #labels[:,i-1] = (labels[:,i-1] - val1) / (val2 - val1)           
+                
+        print(f"# Load statistics from {norm_param_file}")
+    
+    return images, labels
+
+
+def convert_to_torch(images, labels, rtrain=0.9, device="cpu"):
+    images = torch.from_numpy(np.array(images).astype(np.float32))
+    labels = torch.from_numpy(np.array(labels).astype(np.float32))
+
+    images_train, images_val = images[:int(rtrain*len(images)), :, :], images[int(rtrain*len(images)):, :, :]
+    labels_train, labels_val = labels[:int(rtrain*len(images)), :], labels[int(rtrain*len(images)):, :]
+    
+    images_train = images_train.to(device)
+    images_val = images_val.to(device)
+    labels_train = labels_train.to(device)
+    labels_val = labels_val.to(device)
+
+    return images_train, labels_train, images_val, labels_val
+
+def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, device=None):
+    data_list = []
+    label_list = []
+    for i in range(istart, istart+ndata):
+        data_now = []
+        label_now = []
+        for j in range(n_feature):
+            filename = f"{data_dir}/cylindrical_power_{i}_{j}.txt"
+            data = np.loadtxt(filename, skiprows=1)
+            x_HI = np.loadtxt(filename, max_rows=1)
+
+            data = data[:npix, :npix]
+
+            data_now.append(data)
+            label_now.append(x_HI)
+
+        data_list.append(data_now)
+        label_list.append(label_now)
+
+    data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train)
+
+    return convert_to_torch(data, label, rtrain=rtrain, device=device)
 
 def load_jwst_data(ndata=2240, parent_dir="./COSMOS_web_galaxies", device=None):
     cosmos_cata=pd.read_csv(parent_dir+'/cd3_catalog.txt', " ")

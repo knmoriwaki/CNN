@@ -13,7 +13,7 @@ def MyModel(args):
 
 
     if args.model == "CNN":
-        model = ConvNet(input_dim=args.input_dim, n_feature=args.n_feature, hidden_dim=args.hidden_dim, n_layer=args.n_layer, r_drop=args.r_drop, last_act=last_act)
+        model = ConvNet(input_dim=args.input_dim, n_feature=args.n_feature, n_feature_out=args.n_feature, hidden_dim=args.hidden_dim, n_layer=args.n_layer, r_drop=args.r_drop, last_act=last_act)
     else:
         print("Error: unkonwn model", file=sys.stderr)
         sys.exit(1)
@@ -37,7 +37,7 @@ class ConvBlock(nn.Module):
     
 class ConvNet(nn.Module):
 
-    def __init__(self, n_feature=4, hidden_dim=32, input_dim=106, n_layer=4, kernel_size=5, r_drop=0, last_act=nn.LogSoftmax(dim=1)):
+    def __init__(self, n_feature=3, n_feature_out=3, hidden_dim=32, input_dim=106, n_layer=4, kernel_size=5, r_drop=0, last_act=nn.LogSoftmax(dim=1)):
         super().__init__()
 
         padding = int( kernel_size / 2 )
@@ -54,10 +54,11 @@ class ConvNet(nn.Module):
             ])
         
         tmp = input_dim
-        for i in range(n_layer): tmp = int( ( tmp + 1 ) / 2 )
+        for i in range(n_layer): 
+            tmp = int( ( tmp + 1 ) / 2 )
         final_dim = tmp * tmp * output_dims[-1]
         
-        self.linear = nn.Linear(final_dim, 1)
+        self.linear = nn.Linear(final_dim, n_feature_out)
         self.output_act = last_act
 
     def forward(self, x):
@@ -65,6 +66,7 @@ class ConvNet(nn.Module):
 
         batch_size = x.size(0)
         for blk in self.blocks:
+            
             x = blk(x)
 
         x = x.contiguous().view(batch_size, -1)
