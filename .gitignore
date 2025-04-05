@@ -6,3 +6,5 @@ TrainingData/
 TestData/
 __pycache__/
 output/
+PS1_PS2_Data/
+.ipynb_checkpoints/

@@ -7,13 +7,12 @@ import torch.nn.functional as F
 
 def MyModel(args):
     if args.loss == "nllloss":
-        last_act = nn.LogSoftmax(dim=1)
+        last_act = nn.LogSoftmax(dim=-1)
     else:
-        last_act = nn.Sigmoid() 
-
+        last_act = nn.Sigmoid()
 
     if args.model == "CNN":
-        model = ConvNet(input_dim=args.input_dim, n_feature=args.n_feature, n_feature_out=args.n_feature, hidden_dim=args.hidden_dim, n_layer=args.n_layer, r_drop=args.r_drop, last_act=last_act)
+        model = ConvNet(input_dim=args.input_dim, n_feature=args.n_feature, n_feature_out=args.n_feature, hidden_dim=args.hidden_dim, output_dim=args.output_dim, n_layer=args.n_layer, r_drop=args.r_drop, last_act=last_act)
     else:
         print("Error: unkonwn model", file=sys.stderr)
         sys.exit(1)
@@ -33,11 +32,10 @@ class ConvBlock(nn.Module):
         x = self.act(x)
 
         return x
-    
-    
+  
 class ConvNet(nn.Module):
 
-    def __init__(self, n_feature=3, n_feature_out=3, hidden_dim=32, input_dim=106, n_layer=4, kernel_size=5, r_drop=0, last_act=nn.LogSoftmax(dim=1)):
+    def __init__(self, n_feature=3, n_feature_out=3, hidden_dim=32, input_dim=106, output_dim=1, n_layer=4, kernel_size=5, r_drop=0, last_act=nn.LogSoftmax(dim=1)):
         super().__init__()
 
         padding = int( kernel_size / 2 )
@@ -58,8 +56,14 @@ class ConvNet(nn.Module):
             tmp = int( ( tmp + 1 ) / 2 )
         final_dim = tmp * tmp * output_dims[-1]
         
-        self.linear = nn.Linear(final_dim, n_feature_out)
+        self.linear = nn.Linear(final_dim, n_feature_out*output_dim)
+        if output_dim > 1:
+            #self.conv_last = nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=1, groups=1)
+            self.conv_last = nn.Conv1d(n_feature_out, n_feature_out, kernel_size=3, stride=1, padding=1, groups=n_feature_out)
+
+
         self.output_act = last_act
+        self.output_dim = output_dim
 
     def forward(self, x):
         ## x: (batch, seq, input_dim)
@@ -72,8 +76,13 @@ class ConvNet(nn.Module):
         x = x.contiguous().view(batch_size, -1)
 
         x = self.linear(x)
-        x = self.output_act(x)
+        if self.output_dim > 1:
+            x = x.view(batch_size, -1, self.output_dim)
+            x = self.conv_last(x) # (batch, n_feature_out, output_dim)
 
+        x = self.output_act(x)
+        
+        # x: (batch, n_feature_out, output_dim) or (batch, n_feature_out)
         return x
 
 

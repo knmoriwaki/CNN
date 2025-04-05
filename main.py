@@ -25,6 +25,7 @@ parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="di
 parser.add_argument("--data_dir", dest="data_dir", type=str, default="./data", help="directory to data")
 parser.add_argument("--n_feature", dest="n_feature", type=int, default=3, help="number of input elements")
 parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension")
+parser.add_argument("--output_dim", dest="output_dim", type=int, default=1, help="the output dimension. Used for nllloss")
 parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
 parser.add_argument("--ndata", dest="ndata", type=int, default=1000, help="the number of data")
 
@@ -39,7 +40,7 @@ parser.add_argument("--batch_size", dest="batch_size", type=int, default=32, hel
 parser.add_argument("--epoch", dest="epoch", type=int, default=100, help="training epoch")
 parser.add_argument("--epoch_decay", dest="epoch_decay", type=int, default=0, help="training epoch")
 parser.add_argument("--lr", dest="lr", type=float, default=1e-3, help="learning rate")
-parser.add_argument("--loss", dest="loss", default="l1norm", help="loss function")
+parser.add_argument("--loss", dest="loss", default="l1norm", help="loss function: nllloss -> density estimation. others -> simple regression")
 args = parser.parse_args()
 
 def main():
@@ -91,12 +92,25 @@ def train(device):
     if args.loss == "l1norm":
         loss_func = nn.L1Loss(reduction="mean")
         odim = 1 
+    elif args.loss == "l2norm":
+        loss_func = nn.MSELoss(reduction="mean")
+        odim = 1
+    elif args.loss == "nllloss":
+        if args.output_dim < 2:
+            raise ValueError("output_dim must be larger than 1 for nllloss")
+
+        def loss_func(output, target):
+            bins = torch.linspace(0, 1, args.output_dim+1, device=target.device)
+            bin_indices = torch.bucketize(target, bins) - 1
+            bin_indices = bin_indices.clamp(0, args.output_dim-1)
+            log_probs = torch.gather(output, dim=2, index=bin_indices.unsqueeze(-1)).squeeze(-1)  # (batch, 3)
+            return -log_probs.mean()
+
     else:
         print("Error: unknown loss", file=sys.stderr)
         sys.exit(1)
 
     print( f"# loss function: {args.loss}")
-
 
     ### define network and optimizer ###
     model = MyModel(args)
@@ -104,7 +118,7 @@ def train(device):
     print(model)
     summary( model, input_size=(args.batch_size, args.n_feature, args.input_dim, args.input_dim), col_names=["input_size", "output_size", "num_params"])
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0) #default: lr=1e-3, betas=(0.9,0.999), eps=1e-8
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.01) #default: lr=1e-3, betas=(0.9,0.999), eps=1e-8
     def lambda_rule(ee):
         lr_l = 1.0 - max(0, ee + 1 - args.epoch) / float( args.epoch_decay + 1 )
         return lr_l
@@ -118,7 +132,7 @@ def train(device):
     ### load training and validation data ###
     norm_param_file = f"{args.model_dir}/norm_param.txt"
     data, label, val_data, val_label = load_SDC3b_data(args.data_dir, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
-
+        
     print( f"# data: {data.size()}")
     print( f"# label: {label.size()}")
     print( f"# val_data: {val_data.size()}")
@@ -176,15 +190,27 @@ def train(device):
     with torch.no_grad():
         output = model(val_data)
 
-        fname = "{}/val.txt".format(args.model_dir)
-        with open(fname, "w") as f:
-            for i, (ll, oo) in enumerate(zip(val_label, output)):
-                pred = oo 
-                true = ll
-                for j in range(args.n_feature):
-                    print(f"{true[j].item()} {pred[j].item()} ", end="", file=f)
-                print("", file=f)
-        print(f"# output {fname}", file=sys.stderr)
+        if args.loss == "nllloss":
+            for i, (true, pred) in enumerate(zip(val_label, output)):
+                fname = "{}/val_{}.txt".format(args.model_dir, i)
+                with open(fname, "w") as f:
+                    print("# ", end="", file=f)
+                    for k in range(args.n_feature):
+                        print(f"{true[k].item()} ", end="", file=f)   
+                    print("", file=f)
+                    for j in range(args.output_dim):
+                        for k in range(args.n_feature):
+                            print(f"{pred[k, j].item()} ", end="", file=f)
+                        print("", file=f)
+                    print(f"# output {fname}", file=sys.stderr)
+        else:
+            fname = "{}/val.txt".format(args.model_dir)
+            with open(fname, "w") as f:
+                for i, (true, pred) in enumerate(zip(val_label, output)):
+                    for j in range(args.n_feature):
+                        print(f"{true[j].item()} {pred[j].item()} ", end="", file=f)
+                    print("", file=f)
+            print(f"# output {fname}", file=sys.stderr)
 
     ### save model ###
     fsave = "{}/model.pth".format(args.model_dir)

@@ -12,7 +12,7 @@ from tqdm import tqdm
 # -*- coding: utf-8 -*-
 
 
-def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False):
+def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False, normalize_labels=True):
     images = np.array(images)
     labels = np.array(labels)
     
@@ -34,7 +34,8 @@ def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, fo
                     max_val = np.max(labels[:,i])
                     f.write(f"{min_val} {max_val}\n")
 
-                    #labels[:,i] = (labels[:,i] - min_val) / (max_val - min_val)
+                    if normalize_labels:
+                        labels[:,i] = (labels[:,i] - min_val) / (max_val - min_val)
 
         print(f"# Save statistics to {norm_param_file}")
 
@@ -48,8 +49,8 @@ def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, fo
                 if i == 0:
                     images = (images - val1) / val2
                 else:
-                    pass
-                    #labels[:,i-1] = (labels[:,i-1] - val1) / (val2 - val1)           
+                    if normalize_labels:
+                        labels[:,i-1] = (labels[:,i-1] - val1) / (val2 - val1)
                 
         print(f"# Load statistics from {norm_param_file}")
     
@@ -70,9 +71,33 @@ def convert_to_torch(images, labels, rtrain=0.9, device="cpu"):
 
     return images_train, labels_train, images_val, labels_val
 
-def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, device=None):
+def add_noise_on_2d_power(signal_power, noise_mean, Nk):
+    n_kpar, n_kper = np.shape(signal_power)
+    for i in range(n_kpar):
+        for j in range(n_kper):
+            sigma = (signal_power[i,j] + noise_mean[i,j]) / np.sqrt(Nk[j])
+            signal_power[i,j] += np.random.normal(0, sigma)
+
+    return signal_power
+
+def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, add_noise=False, data_in_mK=True, device=None):
     data_list = []
     label_list = []
+
+    ### Add noise ### 
+    # no need to do this when applying to the actual data
+    if add_noise:
+        noise_dir = "./PS1_PS2_Data"
+        frequencies = ['181.0_195.9', '166.0_180.9', '151.0_165.9'] # from small to large redshift
+        noise_mean = []
+        Nk = []
+        for i in range(3):
+            noise_mean.append( np.loadtxt(f"{noise_dir}/Pk_PS_averaged_noise_{frequencies[i]}.txt") )
+            Nk.append( np.loadtxt(f"{noise_dir}/Nk_{frequencies[i]}.txt") )
+        # noise_mean: a list of (npix, npix) array
+        # Nk: a list of (npix, ) array
+
+    ### Load simulation data ###
     for i in range(istart, istart+ndata):
         data_now = []
         label_now = []
@@ -81,7 +106,14 @@ def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_tra
             data = np.loadtxt(filename, skiprows=1)
             x_HI = np.loadtxt(filename, max_rows=1)
 
+            if data_in_mK:
+                data *= 1e-6 # convert unit from [mK^2 (Mpc/h)^3] to [K^2 (Mpc/h)^3]
+
             data = data[:npix, :npix]
+            if add_noise:
+                data = add_noise_on_2d_power(data, noise_mean[j][:npix,:npix], Nk[j][:npix])
+
+            data = np.log10(data + 0.1) 
 
             data_now.append(data)
             label_now.append(x_HI)
@@ -89,7 +121,7 @@ def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_tra
         data_list.append(data_now)
         label_list.append(label_now)
 
-    data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train)
+    data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_labels=False) # normalize_labels=False because the neutral fraction is already in [0,1]
 
     return convert_to_torch(data, label, rtrain=rtrain, device=device)
 

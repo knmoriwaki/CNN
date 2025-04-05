@@ -4,4 +4,6 @@ torchvision
 numpy
 matplotlib
 tqdm
+jupyter
+notebook
 jupyterlab
