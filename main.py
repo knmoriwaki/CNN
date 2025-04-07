@@ -23,11 +23,13 @@ parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="di
 
 ### Data parameters ###
 parser.add_argument("--data_dir", dest="data_dir", type=str, default="./data", help="directory to data")
+parser.add_argument("--file_id", dest="file_id", type=str, default="cylindrical_power", help="data file id")
 parser.add_argument("--n_feature", dest="n_feature", type=int, default=3, help="number of input elements")
 parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension")
 parser.add_argument("--output_dim", dest="output_dim", type=int, default=1, help="the output dimension. Used for nllloss")
 parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
 parser.add_argument("--ndata", dest="ndata", type=int, default=1000, help="the number of data")
+parser.add_argument("--n_noise", dest="n_noise", type=int, default=1, help="the number of noise data")
 
 ### Model parameters ###
 parser.add_argument("--model", dest="model", default="CNN", help="model")
@@ -131,7 +133,7 @@ def train(device):
 
     ### load training and validation data ###
     norm_param_file = f"{args.model_dir}/norm_param.txt"
-    data, label, val_data, val_label = load_SDC3b_data(args.data_dir, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
+    data, label, val_data, val_label = load_SDC3b_data(args.data_dir, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, add_noise=True, n_noise=args.n_noise, is_train=True, device=device)
         
     print( f"# data: {data.size()}")
     print( f"# label: {label.size()}")
@@ -139,9 +141,17 @@ def train(device):
     print( f"# val_label: {val_label.size()}")
 
     dataset = MyDataset(data, label)
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    #train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     
-    ntrain = label.size(dim = 0)
+    bins = torch.linspace(0, 1, args.output_dim + 1).to(device)
+    bin_indices = torch.bucketize(label[:, 0].contiguous(), bins, right=True) - 1
+    bin_indices = bin_indices.clamp(0, args.output_dim - 1)
+    bin_counts = torch.bincount(bin_indices, minlength=args.output_dim + 1)
+    weights = 1.0 / bin_counts[bin_indices]
+    weights = weights / weights.sum()
+    weights = weights.clamp(0.1, 1.0) # avoid zero weights
+    sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), replacement=True)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, sampler=sampler, drop_last=True)
 
     ### training ###
     idx = 0
@@ -150,8 +160,7 @@ def train(device):
     with open(fout, "w") as f:
         print("#idx loss loss_val", file=f)
     for ee in tqdm(range(args.epoch + args.epoch_decay), file=sys.stderr):
-        if ee != 0:
-            update_learning_rate(optimizer, scheduler)
+        
         for i, (dd, ll) in enumerate(train_loader):
             
             dd = dd.to(device)
@@ -173,7 +182,7 @@ def train(device):
                 loss_val = loss_func(output_val, val_label)
 
             log = "{:d} {:f} {:f}".format(idx, loss.item(), loss_val.item())
-            print(log)
+            #print(log)
             with open(fout, "a") as f:
                 print(log, file=f)
 
@@ -181,10 +190,9 @@ def train(device):
             loss.backward()
             optimizer.step()
 
-            del dd, ll, output
-            torch.cuda.empty_cache()
-
             idx += 1
+
+        update_learning_rate(optimizer, scheduler)
  
     ### print validation result ###
     with torch.no_grad():
@@ -233,27 +241,55 @@ def test(device):
 
     ### load test data ###
     norm_param_file = f"{args.model_dir}/norm_param.txt"
-    data, label, _, _ = load_SDC3b_data(args.data_dir, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, istart=args.idata_start, ndata=args.ndata, is_train=False, device=device)
+    data, label, _, _ = load_SDC3b_data(args.data_dir, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, istart=args.idata_start, ndata=args.ndata, add_noise=True, is_train=False, device=device)
 
     ### output test result ###
-    fname = "{}/test.txt".format(args.model_dir)
-    with open(fname, "w") as f:
-        for dd, ll in zip(data, label):
+    if args.loss == "nllloss":
+        for i, (dd, ll) in enumerate(zip(data, label)):
+
+            data_id = i + args.idata_start
 
             dd = torch.unsqueeze(dd, dim=0).to(device)
             ll = torch.unsqueeze(ll, dim=0).to(device)
 
-            output = model(dd)
+            with torch.no_grad():
+                output = model(dd)
             pred = output 
             true = ll 
 
-            for j in range(args.n_feature):
-                print(f"{true[0,j].item()} {pred[0,j].item()} ", end="", file=f)
-            print("", file=f)
+            fname = "{}/test_{}_{:d}.txt".format(args.model_dir, args.file_id, data_id)
+            with open(fname, "w") as f:
+        
+                print("# ", end="", file=f)
+                for k in range(args.n_feature):
+                    print(f"{true[0,k].item()} ", end="", file=f)   
+                print("", file=f)
+                for j in range(args.output_dim):
+                    for k in range(args.n_feature):
+                        print(f"{pred[0, k, j].item()} ", end="", file=f)
+                    print("", file=f)
+                print(f"# output {fname}", file=sys.stderr)
+            print(f"# output {fname}", file=sys.stderr)
+    else:
 
-            del dd, ll, output
-            torch.cuda.empty_cache()
-    print(f"output {fname}", file=sys.stderr)
+        fname = "{}/test_{}.txt".format(args.model_dir, args.file_id)
+        with open(fname, "w") as f:
+            for dd, ll in zip(data, label):
+
+                dd = torch.unsqueeze(dd, dim=0).to(device)
+                ll = torch.unsqueeze(ll, dim=0).to(device)
+
+                with torch.no_grad():
+                    output = model(dd)
+                pred = output 
+                true = ll 
+
+                for j in range(args.n_feature):
+                    print(f"{true[0,j].item()} {pred[0,j].item()} ", end="", file=f)
+                print("", file=f)
+
+
+        print(f"output {fname}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

@@ -80,46 +80,65 @@ def add_noise_on_2d_power(signal_power, noise_mean, Nk):
 
     return signal_power
 
-def load_SDC3b_data(data_dir, n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, add_noise=False, data_in_mK=True, device=None):
+def load_SDC3b_data(data_dir, file_id="cylindrical_power", n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, add_noise=False, n_noise=1, device=None):
+
+    ### Load noise data ### 
+    noise_dir = "./PS1_PS2_Data"
+    frequencies = ['181.0_195.9', '166.0_180.9', '151.0_165.9'] # from small to large redshift
+    noise_mean = []
+    Nk = []
+    for i in range(3):
+        noise_mean.append( np.loadtxt(f"{noise_dir}/Pk_PS_averaged_noise_{frequencies[i]}.txt") )
+        Nk.append( np.loadtxt(f"{noise_dir}/Nk_{frequencies[i]}.txt") )
+    # noise_mean: a list of (npix, npix) array
+    # Nk: a list of (npix, ) array
+            
+    if not add_noise:
+        if n_noise > 1:
+            print("# Warning: setting n_noise > 1 with option add_noise=False. Use n_noise = 1.")
+            n_noise = 1
+    if "PS1_PS2_Data" in data_dir:
+        if n_noise > 1:
+            print("# Warning: setting n_noise > 1 for PS1_PS2_Data. Use n_noise = 1.")
+            n_noise = 1
+        if ndata != 1:
+            print("# Warning: setting ndata > 1 for PS1_PS2_Data. Use ndata = 1.")    
+            ndata = 1
+        if add_noise:
+            print("# Warning: setting add_noise=True for PS1_PS2_Data. Use add_noise=False.")
+            add_noise = False
+
+    ### Load simulation data ###
     data_list = []
     label_list = []
 
-    ### Add noise ### 
-    # no need to do this when applying to the actual data
-    if add_noise:
-        noise_dir = "./PS1_PS2_Data"
-        frequencies = ['181.0_195.9', '166.0_180.9', '151.0_165.9'] # from small to large redshift
-        noise_mean = []
-        Nk = []
-        for i in range(3):
-            noise_mean.append( np.loadtxt(f"{noise_dir}/Pk_PS_averaged_noise_{frequencies[i]}.txt") )
-            Nk.append( np.loadtxt(f"{noise_dir}/Nk_{frequencies[i]}.txt") )
-        # noise_mean: a list of (npix, npix) array
-        # Nk: a list of (npix, ) array
+    for inoise in range(n_noise):
 
-    ### Load simulation data ###
-    for i in range(istart, istart+ndata):
-        data_now = []
-        label_now = []
-        for j in range(n_feature):
-            filename = f"{data_dir}/cylindrical_power_{i}_{j}.txt"
-            data = np.loadtxt(filename, skiprows=1)
-            x_HI = np.loadtxt(filename, max_rows=1)
+        for i in range(istart, istart+ndata):
+            data_now = []
+            label_now = []
+            for j in range(n_feature):
 
-            if data_in_mK:
-                data *= 1e-6 # convert unit from [mK^2 (Mpc/h)^3] to [K^2 (Mpc/h)^3]
+                if "PS1_PS2_Data" in data_dir:
+                    data = np.loadtxt(f'{data_dir}/{file_id}_{frequencies[j]}.txt')
+                    data -= noise_mean[j]
+                    x_HI = -1.
+                else:
+                    filename = f"{data_dir}/{file_id}_{i}_{j}.txt"
+                    data = np.loadtxt(filename, skiprows=1)
+                    x_HI = np.loadtxt(filename, max_rows=1)
+                    data *= 1e-6 # convert unit from [mK^2 (Mpc/h)^3] to [K^2 (Mpc/h)^3]
+                    if add_noise:
+                        data = add_noise_on_2d_power(data, noise_mean[j], Nk[j])
 
-            data = data[:npix, :npix]
-            if add_noise:
-                data = add_noise_on_2d_power(data, noise_mean[j][:npix,:npix], Nk[j][:npix])
+                data = data[:npix, :npix]
+                data = np.log10(data + 0.1) 
 
-            data = np.log10(data + 0.1) 
+                data_now.append(data)
+                label_now.append(x_HI)
 
-            data_now.append(data)
-            label_now.append(x_HI)
-
-        data_list.append(data_now)
-        label_list.append(label_now)
+            data_list.append(data_now)
+            label_list.append(label_now)
 
     data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_labels=False) # normalize_labels=False because the neutral fraction is already in [0,1]
 

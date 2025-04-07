@@ -57,10 +57,6 @@ class ConvNet(nn.Module):
         final_dim = tmp * tmp * output_dims[-1]
         
         self.linear = nn.Linear(final_dim, n_feature_out*output_dim)
-        if output_dim > 1:
-            #self.conv_last = nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=1, groups=1)
-            self.conv_last = nn.Conv1d(n_feature_out, n_feature_out, kernel_size=3, stride=1, padding=1, groups=n_feature_out)
-
 
         self.output_act = last_act
         self.output_dim = output_dim
@@ -78,8 +74,7 @@ class ConvNet(nn.Module):
         x = self.linear(x)
         if self.output_dim > 1:
             x = x.view(batch_size, -1, self.output_dim)
-            x = self.conv_last(x) # (batch, n_feature_out, output_dim)
-
+            
         x = self.output_act(x)
         
         # x: (batch, n_feature_out, output_dim) or (batch, n_feature_out)
