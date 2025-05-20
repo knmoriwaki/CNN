@@ -12,7 +12,76 @@ from tqdm import tqdm
 # -*- coding: utf-8 -*-
 
 
-def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False, normalize_labels=True):
+
+def preprocess(data, norm_param_file='mean_std.txt', is_train=True):
+    data = np.array(data)
+
+    if norm_param_file == None:
+        print("# No normalization")
+        return data
+
+    num_feature = len(data[0])
+    if is_train:
+        with open(norm_param_file, 'w') as f:
+            for i in range(num_feature):
+                min_val = np.min(data[:,i])
+                max_val = np.max(data[:,i])
+                f.write(f"{min_val} {max_val}\n")
+                data[:,i] = (data[:,i] - min_val) / (max_val - min_val)
+
+        print(f"# Save statistics to {norm_param_file}")
+
+    else:
+        with open(norm_param_file, 'r') as f:
+            for i, line in enumerate(f):
+                val1, val2 = line.split()
+                val1 = float(val1)
+                val2 = float(val2)
+            
+                data[:,i] = (data[:,i] - val1) / (val2 - val1)
+                
+        print(f"# Load statistics from {norm_param_file}")
+    
+    return data
+
+
+def convert_to_torch(images, labels, rtrain=0.9, device="cpu"):
+    images = torch.from_numpy(np.array(images).astype(np.float32))
+    labels = torch.from_numpy(np.array(labels).astype(np.float32))
+
+    images_train, images_val = images[:int(rtrain*len(images)), :, :], images[int(rtrain*len(images)):, :, :]
+    labels_train, labels_val = labels[:int(rtrain*len(images)), :], labels[int(rtrain*len(images)):, :]
+    
+    images_train = images_train.to(device)
+    images_val = images_val.to(device)
+    labels_train = labels_train.to(device)
+    labels_val = labels_val.to(device)
+
+    return images_train, labels_train, images_val, labels_val
+
+def load_AGN_LIM_data(path, norm_param_file=None, source_id=None, target_id=None, is_train=False, rtrain=1, istart=0, ndata=None, device=None):
+
+    data = np.loadtxt(path)
+
+    if ndata is None:
+        data = data[istart:istart+ndata] # (ndata, n_feature)
+
+    data = preprocess(data, norm_param_file=norm_param_file, is_train=is_train) # normalize the input data
+
+    if source_id is None:
+        source = data[:,:-1] # (ndata, n_feature-1)
+    else:
+        source = data[:,source_id]
+
+    if target_id is None:
+        target = data[:,-1] # (ndata, 1)
+    else:
+        target = data[:,target_id]
+
+    return convert_to_torch(source, target, rtrain=rtrain, device=device)
+
+    
+def preprocess_image_label(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False, normalize_labels=True):
     images = np.array(images)
     labels = np.array(labels)
     
@@ -56,20 +125,6 @@ def preprocess(images, labels, norm_param_file='mean_std.txt', is_train=True, fo
     
     return images, labels
 
-
-def convert_to_torch(images, labels, rtrain=0.9, device="cpu"):
-    images = torch.from_numpy(np.array(images).astype(np.float32))
-    labels = torch.from_numpy(np.array(labels).astype(np.float32))
-
-    images_train, images_val = images[:int(rtrain*len(images)), :, :], images[int(rtrain*len(images)):, :, :]
-    labels_train, labels_val = labels[:int(rtrain*len(images)), :], labels[int(rtrain*len(images)):, :]
-    
-    images_train = images_train.to(device)
-    images_val = images_val.to(device)
-    labels_train = labels_train.to(device)
-    labels_val = labels_val.to(device)
-
-    return images_train, labels_train, images_val, labels_val
 
 def add_noise_on_2d_power(signal_power, noise_mean, Nk):
     n_kpar, n_kper = np.shape(signal_power)
@@ -140,7 +195,7 @@ def load_SDC3b_data(data_dir, file_id="cylindrical_power", n_feature=3, npix=10,
             data_list.append(data_now)
             label_list.append(label_now)
 
-    data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_labels=False) # normalize_labels=False because the neutral fraction is already in [0,1]
+    data, label = preprocess_image_label(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_labels=False) # normalize_labels=False because the neutral fraction is already in [0,1]
 
     return convert_to_torch(data, label, rtrain=rtrain, device=device)
 
