@@ -22,14 +22,15 @@ parser.add_argument("--isTrain", dest="isTrain", action='store_true', help="trai
 parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="directory to save learned model parameters")
 
 ### Data parameters ###
-parser.add_argument("--data_dir", dest="data_dir", type=str, default="./data", help="directory to data")
+parser.add_argument("--data_path", dest="data_path", type=str, default="./data", help="directory to data")
 parser.add_argument("--file_id", dest="file_id", type=str, default="cylindrical_power", help="data file id")
-parser.add_argument("--n_feature", dest="n_feature", type=int, default=3, help="number of input elements")
-parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension")
+
+parser.add_argument("--n_feature_in", dest="n_feature_in", type=int, default=3, help="number of input elements")
+parser.add_argument("--n_feature_out", dest="n_feature_out", type=int, default=3, help="number of output elements")
+parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension (used for CNN)")
 parser.add_argument("--output_dim", dest="output_dim", type=int, default=1, help="the output dimension. Used for nllloss")
 parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
 parser.add_argument("--ndata", dest="ndata", type=int, default=1000, help="the number of data")
-parser.add_argument("--n_noise", dest="n_noise", type=int, default=1, help="the number of noise data")
 
 ### Model parameters ###
 parser.add_argument("--model", dest="model", default="CNN", help="model")
@@ -133,8 +134,9 @@ def train(device):
 
     ### load training and validation data ###
     norm_param_file = f"{args.model_dir}/norm_param.txt"
-    data, label, val_data, val_label = load_SDC3b_data(args.data_dir, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, add_noise=True, n_noise=args.n_noise, is_train=True, device=device)
-        
+    data, label, val_data, val_label = load_SDC3b_data(args.data_path, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, add_noise=True, n_noise=args.n_noise, is_train=True, device=device)
+    #data, label, val_data, val_label = load_AGN_LIM_data(args.data_path, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
+    
     print( f"# data: {data.size()}")
     print( f"# label: {label.size()}")
     print( f"# val_data: {val_data.size()}")
