@@ -8,26 +8,35 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 
 from tqdm import tqdm
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-
-
-def preprocess(data, norm_param_file='mean_std.txt', is_train=True):
-    data = np.array(data)
-
+def preprocess(source, target, norm_param_file='mean_std.txt', is_train=True, normalize_target=True):
+    source = np.array(source)
+    target = np.array(target)
+    
     if norm_param_file == None:
         print("# No normalization")
-        return data
+        return source, target
+    
+    n_feature_in = source.shape[1]
+    n_feature_out = target.shape[1]
 
-    num_feature = len(data[0])
+
     if is_train:
         with open(norm_param_file, 'w') as f:
-            for i in range(num_feature):
-                min_val = np.min(data[:,i])
-                max_val = np.max(data[:,i])
-                f.write(f"{min_val} {max_val}\n")
-                data[:,i] = (data[:,i] - min_val) / (max_val - min_val)
+            for i in range(n_feature_in):
+                mean = np.mean(source[:,i])
+                std = np.std(source[:,i])
+                f.write(f"{mean} {std}\n")
+
+                source[:,i] = (source[:,i] - mean) / std
+
+            if normalize_target:
+                for i in range(n_feature_out):
+                    min_val = np.min(target[:,i])
+                    max_val = np.max(target[:,i])
+                    f.write(f"{min_val} {max_val}\n")
+
+                    target[:,i] = (target[:,i] - min_val) / (max_val - min_val)
 
         print(f"# Save statistics to {norm_param_file}")
 
@@ -38,35 +47,37 @@ def preprocess(data, norm_param_file='mean_std.txt', is_train=True):
                 val1 = float(val1)
                 val2 = float(val2)
             
-                data[:,i] = (data[:,i] - val1) / (val2 - val1)
+                if i < n_feature_in:
+                    source[:,i] = (source[:,i] - val1) / val2
+                else:
+                    if normalize_target:
+                        target[:,i-n_feature_in] = (target[:,i-n_feature_in] - val1) / (val2 - val1)
                 
         print(f"# Load statistics from {norm_param_file}")
     
-    return data
+    return source, target
 
+def convert_to_torch(source, target, rtrain=0.9, device="cpu"):
+    source = torch.from_numpy(np.array(source).astype(np.float32))
+    target = torch.from_numpy(np.array(target).astype(np.float32))
 
-def convert_to_torch(images, labels, rtrain=0.9, device="cpu"):
-    images = torch.from_numpy(np.array(images).astype(np.float32))
-    labels = torch.from_numpy(np.array(labels).astype(np.float32))
-
-    images_train, images_val = images[:int(rtrain*len(images)), :, :], images[int(rtrain*len(images)):, :, :]
-    labels_train, labels_val = labels[:int(rtrain*len(images)), :], labels[int(rtrain*len(images)):, :]
+    ndata_train = int( rtrain * len(source) )
+    source_train, source_val = source[:ndata_train], source[ndata_train:]
+    target_train, target_val = target[:ndata_train], target[ndata_train:]
     
-    images_train = images_train.to(device)
-    images_val = images_val.to(device)
-    labels_train = labels_train.to(device)
-    labels_val = labels_val.to(device)
+    source_train = source_train.to(device)
+    source_val = source_val.to(device)
+    target_train = target_train.to(device)
+    target_val = target_val.to(device)
 
-    return images_train, labels_train, images_val, labels_val
+    return source_train, target_train, source_val, target_val
 
 def load_AGN_LIM_data(path, norm_param_file=None, source_id=None, target_id=None, is_train=False, rtrain=1, istart=0, ndata=None, device=None):
 
-    data = np.loadtxt(path)
+    data = np.loadtxt(path, skiprows=1) # (ndata, n_feature)
 
     if ndata is None:
         data = data[istart:istart+ndata] # (ndata, n_feature)
-
-    data = preprocess(data, norm_param_file=norm_param_file, is_train=is_train) # normalize the input data
 
     if source_id is None:
         source = data[:,:-1] # (ndata, n_feature-1)
@@ -77,55 +88,14 @@ def load_AGN_LIM_data(path, norm_param_file=None, source_id=None, target_id=None
         target = data[:,-1] # (ndata, 1)
     else:
         target = data[:,target_id]
+    
+    source = np.log10( source )
 
+    source, target = preprocess(source, target, norm_param_file=norm_param_file, is_train=is_train, normalize_target=False) # normalize the input data
+    
     return convert_to_torch(source, target, rtrain=rtrain, device=device)
 
     
-def preprocess_image_label(images, labels, norm_param_file='mean_std.txt', is_train=True, for_estimate_only=False, normalize_labels=True):
-    images = np.array(images)
-    labels = np.array(labels)
-    
-    if norm_param_file == None:
-        print("# No normalization")
-        return images, labels
-
-    if is_train:
-        with open(norm_param_file, 'w') as f:
-            mean = np.mean(images)
-            std = np.std(images)
-            f.write(f"{mean} {std}\n")
-
-            images = (images - mean) / std
-
-            if not for_estimate_only:
-                for i in range(labels.shape[1]):
-                    min_val = np.min(labels[:,i])
-                    max_val = np.max(labels[:,i])
-                    f.write(f"{min_val} {max_val}\n")
-
-                    if normalize_labels:
-                        labels[:,i] = (labels[:,i] - min_val) / (max_val - min_val)
-
-        print(f"# Save statistics to {norm_param_file}")
-
-    else:
-        with open(norm_param_file, 'r') as f:
-            for i, line in enumerate(f):
-                val1, val2 = line.split()
-                val1 = float(val1)
-                val2 = float(val2)
-            
-                if i == 0:
-                    images = (images - val1) / val2
-                else:
-                    if normalize_labels:
-                        labels[:,i-1] = (labels[:,i-1] - val1) / (val2 - val1)
-                
-        print(f"# Load statistics from {norm_param_file}")
-    
-    return images, labels
-
-
 def add_noise_on_2d_power(signal_power, noise_mean, Nk):
     n_kpar, n_kper = np.shape(signal_power)
     for i in range(n_kpar):
@@ -135,7 +105,7 @@ def add_noise_on_2d_power(signal_power, noise_mean, Nk):
 
     return signal_power
 
-def load_SDC3b_data(data_dir, file_id="cylindrical_power", n_feature=3, npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, add_noise=False, n_noise=1, device=None):
+def load_SDC3b_data(data_dir, file_id="cylindrical_power", source_id=[0,1,2], npix=10, norm_param_file=None, is_train=False, rtrain=1, istart=0, ndata=10000, add_noise=False, n_noise=1, device=None):
 
     ### Load noise data ### 
     noise_dir = "./PS1_PS2_Data"
@@ -172,7 +142,7 @@ def load_SDC3b_data(data_dir, file_id="cylindrical_power", n_feature=3, npix=10,
         for i in range(istart, istart+ndata):
             data_now = []
             label_now = []
-            for j in range(n_feature):
+            for j in source_id:
 
                 if "PS1_PS2_Data" in data_dir:
                     data = np.loadtxt(f'{data_dir}/{file_id}_{frequencies[j]}.txt')
@@ -189,13 +159,13 @@ def load_SDC3b_data(data_dir, file_id="cylindrical_power", n_feature=3, npix=10,
                 data = data[:npix, :npix]
                 data = np.log10(data + 0.1) 
 
-                data_now.append(data)
+                data_now.append(data) 
                 label_now.append(x_HI)
 
-            data_list.append(data_now)
-            label_list.append(label_now)
+            data_list.append(data_now) # (ndata, n_feature, npix, npix)
+            label_list.append(label_now) # (ndata, n_feature)
 
-    data, label = preprocess_image_label(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_labels=False) # normalize_labels=False because the neutral fraction is already in [0,1]
+    data, label = preprocess(data_list, label_list, norm_param_file=norm_param_file, is_train=is_train, normalize_target=False) # normalize_target=False because the neutral fraction is already in [0,1]
 
     return convert_to_torch(data, label, rtrain=rtrain, device=device)
 

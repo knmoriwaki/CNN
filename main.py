@@ -25,8 +25,10 @@ parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="di
 parser.add_argument("--data_path", dest="data_path", type=str, default="./data", help="directory to data")
 parser.add_argument("--file_id", dest="file_id", type=str, default="cylindrical_power", help="data file id")
 
-parser.add_argument("--n_feature_in", dest="n_feature_in", type=int, default=3, help="number of input elements")
-parser.add_argument("--n_feature_out", dest="n_feature_out", type=int, default=3, help="number of output elements")
+parser.add_argument("--norm_param_file", dest="norm_param_file", type=str, default="./data/normalization_params.txt", help="normalization parameter file")
+parser.add_argument("--source_id", dest="source_id", type=int, nargs='+', default=[0], help="source id")
+parser.add_argument("--target_id", dest="target_id", type=int, nargs='+', default=[-1], help="target id")
+
 parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help="the input dimension (used for CNN)")
 parser.add_argument("--output_dim", dest="output_dim", type=int, default=1, help="the output dimension. Used for nllloss")
 parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
@@ -68,9 +70,15 @@ def main():
     torch.manual_seed(random_seed)
     #torch.use_deterministic_algorithms(True)
 
+    args.n_feature_in = len(args.source_id)
+    args.n_feature_out = len(args.target_id)
+
     if args.isTrain:
-        with open("{}/params.json".format(args.model_dir), mode="a") as f:
-            json.dump(args.__dict__, f)
+        fname = f"{args.model_dir}/args.json"
+        with open(fname, "w") as f:
+            json.dump(vars(args), f)
+        print(f"# Arguments saved to {fname}")
+
         train(device)
     else:
         test(device)
@@ -97,10 +105,13 @@ def train(device):
 
     if args.loss == "l1norm":
         loss_func = nn.L1Loss(reduction="mean")
-        odim = 1 
+        args.output_dim = 1
     elif args.loss == "l2norm":
         loss_func = nn.MSELoss(reduction="mean")
-        odim = 1
+        args.output_dim = 1
+    elif args.loss == "bce":
+        loss_func = nn.BCELoss(reduction="mean")
+        args.output_dim = 1
     elif args.loss == "nllloss":
         if args.output_dim < 2:
             raise ValueError("output_dim must be larger than 1 for nllloss")
@@ -122,7 +133,8 @@ def train(device):
     model = MyModel(args)
 
     print(model)
-    summary( model, input_size=(args.batch_size, args.n_feature, args.input_dim, args.input_dim), col_names=["input_size", "output_size", "num_params"])
+    #summary( model, input_size=(args.batch_size, args.n_feature_in, args.input_dim, args.input_dim), col_names=["input_size", "output_size", "num_params"])
+    summary( model, input_size=(args.batch_size, args.n_feature_in), col_names=["input_size", "output_size", "num_params"])
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.01) #default: lr=1e-3, betas=(0.9,0.999), eps=1e-8
     def lambda_rule(ee):
@@ -136,9 +148,8 @@ def train(device):
     print( f"# n_layer: {args.n_layer}" )
 
     ### load training and validation data ###
-    norm_param_file = f"{args.model_dir}/norm_param.txt"
-    data, label, val_data, val_label = load_SDC3b_data(args.data_path, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, add_noise=True, n_noise=args.n_noise, is_train=True, device=device)
-    #data, label, val_data, val_label = load_AGN_LIM_data(args.data_path, norm_param_file=norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
+    #data, label, val_data, val_label = load_SDC3b_data(args.data_path, file_id=args.file_id, npix=args.input_dim, norm_param_file=args.norm_param_file, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, add_noise=True, n_noise=args.n_noise, is_train=True, device=device)
+    data, label, val_data, val_label = load_AGN_LIM_data(args.data_path, norm_param_file=args.norm_param_file, source_id=args.source_id, target_id=args.target_id, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
     
     print( f"# data: {data.size()}")
     print( f"# label: {label.size()}")
@@ -160,7 +171,7 @@ def train(device):
     else:
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     
-
+    
     ### training ###
     idx = 0
     print("Training...", file=sys.stderr)
@@ -211,11 +222,11 @@ def train(device):
                 fname = "{}/val_{}.txt".format(args.model_dir, i)
                 with open(fname, "w") as f:
                     print("# ", end="", file=f)
-                    for k in range(args.n_feature):
+                    for k in range(args.n_feature_out):
                         print(f"{true[k].item()} ", end="", file=f)   
                     print("", file=f)
                     for j in range(args.output_dim):
-                        for k in range(args.n_feature):
+                        for k in range(args.n_feature_out):
                             print(f"{pred[k, j].item()} ", end="", file=f)
                         print("", file=f)
                     print(f"# output {fname}", file=sys.stderr)
@@ -223,7 +234,7 @@ def train(device):
             fname = "{}/val.txt".format(args.model_dir)
             with open(fname, "w") as f:
                 for i, (true, pred) in enumerate(zip(val_label, output)):
-                    for j in range(args.n_feature):
+                    for j in range(args.n_feature_out):
                         print(f"{true[j].item()} {pred[j].item()} ", end="", file=f)
                     print("", file=f)
             print(f"# output {fname}", file=sys.stderr)
@@ -248,9 +259,10 @@ def test(device):
     print("# load model from {}/model.pth".format(args.model_dir))
 
     ### load test data ###
-    norm_param_file = f"{args.model_dir}/norm_param.txt"
-    data, label, _, _ = load_SDC3b_data(args.data_dir, file_id=args.file_id, n_feature=args.n_feature, npix=args.input_dim, norm_param_file=norm_param_file, istart=args.idata_start, ndata=args.ndata, add_noise=True, is_train=False, device=device)
-
+    
+    #data, label, _, _ = load_SDC3b_data(args.data_dir, file_id=args.file_id, source_id=args.source_id, npix=args.input_dim, norm_param_file=args.norm_param_file, istart=args.idata_start, ndata=args.ndata, add_noise=True, is_train=False, device=device)
+    data, label, val_data, val_label = load_AGN_LIM_data(args.data_path, norm_param_file=args.norm_param_file, source_id=args.source_id, target_id=args.target_id, rtrain=0.9, istart=args.idata_start, ndata=args.ndata, is_train=True, device=device)
+    
     ### output test result ###
     if args.loss == "nllloss":
         for i, (dd, ll) in enumerate(zip(data, label)):
@@ -269,11 +281,11 @@ def test(device):
             with open(fname, "w") as f:
         
                 print("# ", end="", file=f)
-                for k in range(args.n_feature):
+                for k in range(args.n_feature_out):
                     print(f"{true[0,k].item()} ", end="", file=f)   
                 print("", file=f)
                 for j in range(args.output_dim):
-                    for k in range(args.n_feature):
+                    for k in range(args.n_feature_out):
                         print(f"{pred[0, k, j].item()} ", end="", file=f)
                     print("", file=f)
                 print(f"# output {fname}", file=sys.stderr)
@@ -292,7 +304,7 @@ def test(device):
                 pred = output 
                 true = ll 
 
-                for j in range(args.n_feature):
+                for j in range(args.n_feature_out):
                     print(f"{true[0,j].item()} {pred[0,j].item()} ", end="", file=f)
                 print("", file=f)
 
