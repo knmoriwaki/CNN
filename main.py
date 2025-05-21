@@ -23,7 +23,7 @@ parser.add_argument("--model_dir", dest="model_dir", default="./Model", help="di
 
 ### Data parameters ###
 parser.add_argument("--data_path", dest="data_path", type=str, default="./data", help="directory to data")
-parser.add_argument("--file_id", dest="file_id", type=str, default="cylindrical_power", help="data file id")
+parser.add_argument("--file_id", dest="file_id", type=str, default="aaa", help="data file id")
 
 parser.add_argument("--norm_param_file", dest="norm_param_file", type=str, default="./data/normalization_params.txt", help="normalization parameter file")
 parser.add_argument("--source_id", dest="source_id", type=int, nargs='+', default=[0], help="source id")
@@ -178,9 +178,9 @@ def train(device):
     fout = "{}/log.txt".format(args.model_dir)
     with open(fout, "w") as f:
         print("#idx loss loss_val", file=f)
-    for ee in tqdm(range(args.epoch + args.epoch_decay), file=sys.stderr):
+    for ee in range(args.epoch + args.epoch_decay):
         
-        for i, (dd, ll) in enumerate(train_loader):
+        for i, (dd, ll) in tqdm(enumerate(train_loader), file=sys.stderr):
             
             dd = dd.to(device)
             ll = ll.to(device)

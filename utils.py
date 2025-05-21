@@ -3,11 +3,6 @@ import sys
 import numpy as np
 
 import torch
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
-from torch.utils.data import Dataset
-
-from tqdm import tqdm
 
 def preprocess(source, target, norm_param_file='mean_std.txt', is_train=True, normalize_target=True):
     source = np.array(source)
