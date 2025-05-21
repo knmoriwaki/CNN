@@ -31,6 +31,7 @@ parser.add_argument("--input_dim", dest="input_dim", type=int, default=10, help=
 parser.add_argument("--output_dim", dest="output_dim", type=int, default=1, help="the output dimension. Used for nllloss")
 parser.add_argument("--idata_start", dest="idata_start", type=int, default=0, help="the start index of data")
 parser.add_argument("--ndata", dest="ndata", type=int, default=1000, help="the number of data")
+parser.add_argument("--n_noise", dest="n_noise", type=int, default=0, help="the number of noise")
 
 ### Model parameters ###
 parser.add_argument("--model", dest="model", default="CNN", help="model")
@@ -44,6 +45,8 @@ parser.add_argument("--epoch", dest="epoch", type=int, default=100, help="traini
 parser.add_argument("--epoch_decay", dest="epoch_decay", type=int, default=0, help="training epoch")
 parser.add_argument("--lr", dest="lr", type=float, default=1e-3, help="learning rate")
 parser.add_argument("--loss", dest="loss", default="l1norm", help="loss function: nllloss -> density estimation. others -> simple regression")
+parser.add_argument("--use_sampler", dest="use_sampler", action='store_true', help="use sampler")
+
 args = parser.parse_args()
 
 def main():
@@ -143,17 +146,20 @@ def train(device):
     print( f"# val_label: {val_label.size()}")
 
     dataset = MyDataset(data, label)
-    #train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
     
-    bins = torch.linspace(0, 1, args.output_dim + 1).to(device)
-    bin_indices = torch.bucketize(label[:, 0].contiguous(), bins, right=True) - 1
-    bin_indices = bin_indices.clamp(0, args.output_dim - 1)
-    bin_counts = torch.bincount(bin_indices, minlength=args.output_dim + 1)
-    weights = 1.0 / bin_counts[bin_indices]
-    weights = weights / weights.sum()
-    weights = weights.clamp(0.1, 1.0) # avoid zero weights
-    sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), replacement=True)
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, sampler=sampler, drop_last=True)
+    if args.use_sampler:
+        bins = torch.linspace(0, 1, args.output_dim + 1).to(device)
+        bin_indices = torch.bucketize(label[:, 0].contiguous(), bins, right=True) - 1
+        bin_indices = bin_indices.clamp(0, args.output_dim - 1)
+        bin_counts = torch.bincount(bin_indices, minlength=args.output_dim + 1)
+        weights = 1.0 / bin_counts[bin_indices]
+        weights = weights / weights.sum()
+        weights = weights.clamp(0.1, 1.0) # avoid zero weights
+        sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights), replacement=True)
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, sampler=sampler, drop_last=True)
+    else:
+        train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    
 
     ### training ###
     idx = 0
